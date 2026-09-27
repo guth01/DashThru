@@ -345,7 +345,14 @@ function App() {
         </aside>
       </section>
 
-      <footer className="footer-note"><span>DashThru</span><span>Good food. No waiting around.</span><span>© 2026</span></footer>
+      <footer className="footer-note">
+        <span>DashThru</span>
+        <span>Good food. No waiting around.</span>
+        <a href="https://github.com/guth01/DashThru" target="_blank" rel="noreferrer">
+          <ArrowUpRight size={13} /> View source on GitHub
+        </a>
+        <span>© 2026</span>
+      </footer>
     </main>
   );
 }
