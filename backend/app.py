@@ -4,16 +4,16 @@ import re
 from pathlib import Path
 from typing import Any
 
-import torch
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from huggingface_hub import hf_hub_download
+from huggingface_hub import InferenceClient, hf_hub_download
 from pydantic import BaseModel, Field
-from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
 
 MODEL_REPO = os.getenv("MODEL_REPO", "guth001/distilbert-drivethru-intent")
 MODEL_CACHE = os.getenv("MODEL_CACHE", "/tmp/dashthru-model")
+HF_TOKEN = os.getenv("HF_TOKEN") or os.getenv("HUGGINGFACEHUB_API_TOKEN")
+HF_PROVIDER = os.getenv("HF_PROVIDER", "hf-inference")
 
 REPLIES = {
     "order_item": "Great choice. Tell me the item and size you would like, and I’ll add it to your order.",
@@ -304,7 +304,7 @@ def _confirm_reply(cart: dict[str, list[dict[str, Any]]]) -> str:
 
 
 def load_label_maps():
-    """Read the mapping saved beside the fine-tuned model, with safe fallbacks."""
+    """Read the optional label mapping without downloading model weights."""
     mapping = {}
     local_mapping = Path(MODEL_CACHE) / "intent_labels.json"
     try:
@@ -312,7 +312,7 @@ def load_label_maps():
             repo_id=MODEL_REPO,
             filename="intent_labels.json",
             cache_dir=MODEL_CACHE,
-            token=os.getenv("HF_TOKEN") or os.getenv("HUGGINGFACEHUB_API_TOKEN"),
+            token=HF_TOKEN,
         )
         local_mapping = Path(mapping_path)
     except Exception:
@@ -328,6 +328,19 @@ def load_label_maps():
     return {index: label for index, label in enumerate(REPLIES)}
 
 
+def _normalize_model_intent(raw_label: str) -> str:
+    """Convert provider labels such as LABEL_0 into the app's intent names."""
+    label = str(raw_label).strip()
+    normalized = label.lower().replace("-", "_").replace(" ", "_")
+    if normalized in REPLIES:
+        return normalized
+
+    numeric_label = re.fullmatch(r"label[_-]?(\d+)", normalized)
+    if numeric_label:
+        return id2label.get(int(numeric_label.group(1)), "other")
+    return "other"
+
+
 app = FastAPI(title="DashThru Voice Ordering API", version="1.0.0")
 origins = [item.strip() for item in os.getenv("CORS_ORIGINS", "http://localhost:5173").split(",") if item.strip()]
 app.add_middleware(
@@ -338,18 +351,20 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-tokenizer = None
-model = None
+inference_client = None
 id2label = {}
 
 
 @app.on_event("startup")
-def load_model():
-    global tokenizer, model, id2label
-    token = os.getenv("HF_TOKEN") or os.getenv("HUGGINGFACEHUB_API_TOKEN")
-    tokenizer = AutoTokenizer.from_pretrained(MODEL_REPO, cache_dir=MODEL_CACHE, token=token)
-    model = AutoModelForSequenceClassification.from_pretrained(MODEL_REPO, cache_dir=MODEL_CACHE, token=token)
-    model.eval()
+def load_inference_client():
+    global inference_client, id2label
+    if not HF_TOKEN:
+        raise RuntimeError("HF_TOKEN is required for remote Hugging Face inference")
+    inference_client = InferenceClient(
+        model=MODEL_REPO,
+        provider=HF_PROVIDER,
+        token=HF_TOKEN,
+    )
     id2label = load_label_maps()
 
 
@@ -377,21 +392,27 @@ def health_check():
     return {"service": "DashThru voice ordering API", "status": "ok"}
 
 
+def _classify_with_huggingface(text: str) -> tuple[str, float]:
+    """Classify text through Hugging Face without loading model weights locally."""
+    if inference_client is None:
+        raise HTTPException(status_code=503, detail="Hugging Face inference is not configured")
+
+    try:
+        results = inference_client.text_classification(text, model=MODEL_REPO)
+    except Exception as error:
+        raise HTTPException(status_code=502, detail="Hugging Face inference request failed") from error
+
+    if not results:
+        raise HTTPException(status_code=502, detail="Hugging Face returned no classification")
+
+    best_result = max(results, key=lambda result: float(result.score))
+    return _normalize_model_intent(best_result.label), float(best_result.score)
+
+
 @app.post("/predict", response_model=PredictResponse)
 def predict(request: PredictRequest):
-    if model is None or tokenizer is None:
-        raise HTTPException(status_code=503, detail="Model is still loading")
-
     cart = _get_cart(request.session_id)
-    inputs = tokenizer(request.text, return_tensors="pt", truncation=True, max_length=64)
-    # Some tokenizer configurations return token_type_ids, but DistilBERT
-    # does not accept that argument in its forward() method.
-    inputs.pop("token_type_ids", None)
-    with torch.inference_mode():
-        probabilities = torch.softmax(model(**inputs).logits, dim=-1)[0]
-    label_id = int(torch.argmax(probabilities).item())
-    model_intent = id2label.get(label_id, "other")
-    confidence = float(probabilities[label_id].item())
+    model_intent, confidence = _classify_with_huggingface(request.text)
     extracted = extract_entities(request.text)
     intent = _correct_obvious_intent(request.text, model_intent, extracted)
 

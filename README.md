@@ -21,7 +21,7 @@ DashThru combines a React/Vite interface with a FastAPI backend and a fine-tuned
 | --- | --- | --- |
 | Frontend | React + Vite | Voice and text ordering interface |
 | Backend | FastAPI + Uvicorn | Prediction API and cart logic |
-| Model | DistilBERT | Intent classification |
+| Model | Hugging Face Inference Providers | Remote intent classification |
 | Deployment | Docker | Reproducible backend runtime |
 
 ## What it can understand
@@ -77,7 +77,7 @@ pip install -r requirements.txt
 uvicorn app:app --reload --port 7860
 ```
 
-The backend downloads `guth001/distilbert-drivethru-intent` from Hugging Face on startup. The first launch may take a little longer while the model is cached.
+The backend sends classification requests to Hugging Face Inference Providers using `guth001/distilbert-drivethru-intent`. The model weights are not loaded into the Render container, keeping the API lightweight enough for small instances.
 
 ### Frontend
 
@@ -156,6 +156,8 @@ For the backend, use the root `Dockerfile`, expose port `7860`, and set:
 
 ```text
 MODEL_REPO=guth001/distilbert-drivethru-intent
+HF_PROVIDER=hf-inference
+HF_TOKEN=your_hugging_face_token
 CORS_ORIGINS=https://your-frontend.example.com
 ```
 
@@ -177,9 +179,10 @@ VITE_API_URL=https://your-backend.example.com
 | --- | --- | --- |
 | `VITE_API_URL` | `http://localhost:7860` | Frontend API base URL |
 | `MODEL_REPO` | `guth001/distilbert-drivethru-intent` | Hugging Face model repository |
-| `MODEL_CACHE` | `/tmp/dashthru-model` | Model cache directory |
+| `MODEL_CACHE` | `/tmp/dashthru-model` | Temporary cache for the optional label mapping |
 | `CORS_ORIGINS` | `http://localhost:5173` | Comma-separated allowed frontend origins |
-| `HF_TOKEN` | unset | Optional token for private or gated models |
+| `HF_PROVIDER` | `hf-inference` | Hugging Face inference provider |
+| `HF_TOKEN` | required | Hugging Face token with Inference Providers permission |
 
 ## Project structure
 
