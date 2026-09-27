@@ -11,35 +11,56 @@ short_description: FastAPI voice ordering backend
 
 # DashThru
 
-DashThru is a voice-enabled drive-thru ordering assistant. The React/Vite frontend accepts spoken or typed requests, while the FastAPI backend uses a fine-tuned DistilBERT intent classifier to understand orders and maintain a lightweight session cart.
+> A voice-first drive-thru ordering assistant for quick, natural food orders.
 
-## Features
+DashThru combines a React/Vite interface with a FastAPI backend and a fine-tuned DistilBERT intent classifier. Customers can speak or type an order, browse the menu, customize items, remove items, and check out through one conversation.
 
-- Voice input through the browser Web Speech API (Chrome and Edge)
-- Typed ordering mode
-- Menu browsing with one-click item requests
-- Intent detection for greetings, menu questions, new orders, toppings, cancellations, checkout, and confirmation
-- Basic entity extraction for quantities, sizes, menu items, and toppings
-- Session-based cart state held by the backend
+## At a glance
 
-## Requirements
+| Layer | Technology | Purpose |
+| --- | --- | --- |
+| Frontend | React + Vite | Voice and text ordering interface |
+| Backend | FastAPI + Uvicorn | Prediction API and cart logic |
+| Model | DistilBERT | Intent classification |
+| Deployment | Docker | Reproducible backend runtime |
 
-- Node.js and npm
-- Python 3.11 or later
-- A browser with Web Speech API support for voice ordering
+## What it can understand
 
-## Getting started
+- Greetings and menu questions
+- New orders with quantities and sizes
+- Toppings and customizations
+- Item removal and cancellation
+- Checkout and confirmation
+- Menu browsing through one-click prompts
 
-### 1. Start the backend
+## Architecture
 
-From the project root:
+```text
+Browser
+  |
+  |  voice or typed request
+  v
+React/Vite frontend
+  |
+  |  POST /predict
+  v
+FastAPI backend
+  |
+  +--> DistilBERT intent classifier
+  +--> Entity extraction
+  `--> In-memory session cart
+```
+
+## Run locally
+
+### Backend
 
 ```bash
 cd backend
 python -m venv .venv
 ```
 
-Activate the virtual environment:
+Activate the environment:
 
 ```bash
 # macOS/Linux
@@ -56,46 +77,36 @@ pip install -r requirements.txt
 uvicorn app:app --reload --port 7860
 ```
 
-On startup, the backend downloads `guth001/distilbert-drivethru-intent` from Hugging Face and caches it under `/tmp/dashthru-model` by default. The first startup may take a while.
+The backend downloads `guth001/distilbert-drivethru-intent` from Hugging Face on startup. The first launch may take a little longer while the model is cached.
 
-### 2. Start the frontend
+### Frontend
 
-In a second terminal, from the project root:
+Open a second terminal from the project root:
 
 ```bash
-npm install
+npm ci
 npm run dev
 ```
 
-Open the Vite URL shown in the terminal, usually `http://localhost:5173`.
+Then open the Vite URL, normally `http://localhost:5173`.
 
-## Configuration
-
-The frontend uses `http://localhost:7860` unless `VITE_API_URL` is set at build time:
+The frontend uses `http://localhost:7860` by default. To point it at another backend, set `VITE_API_URL` before building:
 
 ```bash
-VITE_API_URL=https://api.example.com npm run build
+VITE_API_URL=https://your-api.example.com npm run build
 ```
-
-The backend supports these environment variables:
-
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `MODEL_REPO` | `guth001/distilbert-drivethru-intent` | Hugging Face model repository |
-| `MODEL_CACHE` | `/tmp/dashthru-model` | Model cache directory |
-| `HF_TOKEN` or `HUGGINGFACEHUB_API_TOKEN` | unset | Optional Hugging Face token for private or gated models |
-| `CORS_ORIGINS` | `http://localhost:5173` | Comma-separated list of allowed frontend origins |
-
-For a deployed frontend, set `CORS_ORIGINS` to its exact origin, for example `https://app.example.com`.
 
 ## API
 
 ### `GET /`
 
-Health check:
+Returns a basic health response:
 
 ```json
-{"service":"DashThru voice ordering API","status":"ok"}
+{
+  "service": "DashThru voice ordering API",
+  "status": "ok"
+}
 ```
 
 ### `POST /predict`
@@ -105,11 +116,11 @@ Request:
 ```json
 {
   "text": "I want two large pepperoni pizzas with extra cheese",
-  "session_id": "a-client-generated-session-id"
+  "session_id": "client-session-id"
 }
 ```
 
-Response fields include the assistant reply, detected intent, model confidence, and the current cart:
+Response:
 
 ```json
 {
@@ -127,34 +138,70 @@ Response fields include the assistant reply, detected intent, model confidence, 
 }
 ```
 
-## Docker
+Interactive API documentation is available at `/docs` when the backend is running.
 
-Build and run the backend container:
+## Deployment
 
-```bash
-cd backend
-docker build -t dashthru-api .
-docker run --rm -p 7860:7860 -e CORS_ORIGINS=http://localhost:5173 dashthru-api
+The repository includes Docker support for deploying the backend as a web service. The frontend can be deployed as a static Vite site.
+
+### Recommended deployment
+
+```text
+Render Web Service  -> FastAPI backend
+Render Static Site  -> React/Vite frontend
+Hugging Face        -> Model hosting
 ```
 
-The frontend is still run separately with Vite unless you add a static hosting layer for the built assets.
+For the backend, use the root `Dockerfile`, expose port `7860`, and set:
+
+```text
+MODEL_REPO=guth001/distilbert-drivethru-intent
+CORS_ORIGINS=https://your-frontend.example.com
+```
+
+For the frontend, build with:
+
+```text
+npm ci && npm run build
+```
+
+and set:
+
+```text
+VITE_API_URL=https://your-backend.example.com
+```
+
+## Configuration
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `VITE_API_URL` | `http://localhost:7860` | Frontend API base URL |
+| `MODEL_REPO` | `guth001/distilbert-drivethru-intent` | Hugging Face model repository |
+| `MODEL_CACHE` | `/tmp/dashthru-model` | Model cache directory |
+| `CORS_ORIGINS` | `http://localhost:5173` | Comma-separated allowed frontend origins |
+| `HF_TOKEN` | unset | Optional token for private or gated models |
 
 ## Project structure
 
 ```text
-src/                 React frontend and styles
-backend/app.py       FastAPI API, model inference, entity extraction, and cart logic
-backend/requirements.txt
-backend/Dockerfile
-index.html
-package.json
+.
+├── src/                  # React application and styles
+├── backend/
+│   ├── app.py            # FastAPI API and ordering logic
+│   ├── requirements.txt  # Python dependencies
+│   └── Dockerfile        # Backend-only container
+├── Dockerfile            # Deployment container for the backend
+├── index.html
+├── package.json
+└── .env.example
 ```
 
-## Development notes
+## Notes
 
-Cart state is stored in backend memory and is keyed by the frontend-generated session ID. It resets when the backend restarts and is not suitable for production persistence or multiple backend workers without a shared datastore.
-
-The intent model is a classifier rather than a general-purpose conversational model. Short, specific requests with correctly spelled menu items produce the most reliable results.
+- Voice input uses the browser Web Speech API and works best in Chrome or Edge.
+- The cart is held in backend memory and resets when the backend restarts.
+- The current cart implementation is intended for a demo and is not yet suitable for multiple backend workers or durable production orders.
+- Short, specific requests with correctly spelled menu items produce the most reliable classifications.
 
 ## License
 
