@@ -1,14 +1,3 @@
----
-title: DashThru API
-colorFrom: orange
-colorTo: red
-sdk: docker
-app_port: 7860
-models:
-  - guth001/distilbert-drivethru-intent
-short_description: FastAPI voice ordering backend
----
-
 # DashThru
 
 > A voice-first drive-thru ordering assistant for quick, natural food orders.
@@ -21,8 +10,8 @@ DashThru combines a React/Vite interface with a FastAPI backend and a fine-tuned
 | --- | --- | --- |
 | Frontend | React + Vite | Voice and text ordering interface |
 | Backend | FastAPI + Uvicorn | Prediction API and cart logic |
-| Model | Hugging Face Inference Providers | Remote intent classification |
-| Deployment | Docker | Reproducible backend runtime |
+| Model | Fine-tuned DistilBERT loaded from Hugging Face Hub | Local intent classification |
+| Deployment | Render native Python web service | Backend hosting |
 
 ## What it can understand
 
@@ -74,10 +63,10 @@ Install dependencies and start the API:
 
 ```bash
 pip install -r requirements.txt
-uvicorn app:app --reload --port 7860
+uvicorn app:app --reload --host 0.0.0.0 --port 7860
 ```
 
-The backend sends classification requests to Hugging Face Inference Providers using `guth001/distilbert-drivethru-intent`. The model weights are not loaded into the Render container, keeping the API lightweight enough for small instances.
+The backend downloads and loads `guth001/distilbert-drivethru-intent` locally at startup, then performs CPU-only inference in the API process.
 
 ### Frontend
 
@@ -142,7 +131,7 @@ Interactive API documentation is available at `/docs` when the backend is runnin
 
 ## Deployment
 
-The repository includes Docker support for deploying the backend as a web service. The frontend can be deployed as a static Vite site.
+The backend is deployed on Render as a native Python web service. The frontend can be deployed as a separate Render static site.
 
 ### Recommended deployment
 
@@ -152,14 +141,24 @@ Render Static Site  -> React/Vite frontend
 Hugging Face        -> Model hosting
 ```
 
-For the backend, use the root `Dockerfile`, expose port `7860`, and set:
+For the backend Render Web Service, set the root directory to `backend` and enter these values manually:
+
+```text
+Runtime: Python 3
+Python version: 3.11.11 (set PYTHON_VERSION=3.11.11)
+Build Command: pip install -r requirements.txt
+Start Command: uvicorn app:app --host 0.0.0.0 --port $PORT
+Health Check Path: /
+```
+
+Set these environment variables:
 
 ```text
 MODEL_REPO=guth001/distilbert-drivethru-intent
-HF_PROVIDER=hf-inference
-HF_TOKEN=your_hugging_face_token
 CORS_ORIGINS=https://your-frontend.example.com
 ```
+
+`HF_TOKEN` is only needed if the model repository is private or gated. The model is downloaded into the instance's temporary cache during startup, so a restart or free-tier sleep can trigger another download and model load.
 
 For the frontend, build with:
 
@@ -181,8 +180,7 @@ VITE_API_URL=https://your-backend.example.com
 | `MODEL_REPO` | `guth001/distilbert-drivethru-intent` | Hugging Face model repository |
 | `MODEL_CACHE` | `/tmp/dashthru-model` | Temporary cache for the optional label mapping |
 | `CORS_ORIGINS` | `http://localhost:5173` | Comma-separated allowed frontend origins |
-| `HF_PROVIDER` | `hf-inference` | Hugging Face inference provider |
-| `HF_TOKEN` | required | Hugging Face token with Inference Providers permission |
+| `HF_TOKEN` | unset | Optional Hugging Face token for private or gated model repositories |
 
 ## Project structure
 
@@ -191,9 +189,7 @@ VITE_API_URL=https://your-backend.example.com
 ├── src/                  # React application and styles
 ├── backend/
 │   ├── app.py            # FastAPI API and ordering logic
-│   ├── requirements.txt  # Python dependencies
-│   └── Dockerfile        # Backend-only container
-├── Dockerfile            # Deployment container for the backend
+│   └── requirements.txt  # Python dependencies
 ├── index.html
 ├── package.json
 └── .env.example

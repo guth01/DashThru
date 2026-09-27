@@ -7,15 +7,16 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from huggingface_hub import InferenceClient, hf_hub_download
+import torch
+from huggingface_hub import hf_hub_download
 from pydantic import BaseModel, Field
+from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
 
 logger = logging.getLogger("dashthru")
 MODEL_REPO = os.getenv("MODEL_REPO", "guth001/distilbert-drivethru-intent")
 MODEL_CACHE = os.getenv("MODEL_CACHE", "/tmp/dashthru-model")
 HF_TOKEN = os.getenv("HF_TOKEN") or os.getenv("HUGGINGFACEHUB_API_TOKEN")
-HF_PROVIDER = os.getenv("HF_PROVIDER", "hf-inference")
 
 REPLIES = {
     "order_item": "Great choice. Tell me the item and size you would like, and I’ll add it to your order.",
@@ -353,22 +354,34 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-inference_client = None
+tokenizer = None
+model = None
 id2label = {}
 
 
 @app.on_event("startup")
-def load_inference_client():
-    global inference_client, id2label
-    if not HF_TOKEN:
-        raise RuntimeError("HF_TOKEN is required for remote Hugging Face inference")
-    inference_client = InferenceClient(
-        model=MODEL_REPO,
-        provider=HF_PROVIDER,
-        api_key=HF_TOKEN,
+def load_model():
+    global tokenizer, model, id2label
+
+    # Render's free instance has one vCPU; extra PyTorch worker threads add
+    # overhead without improving latency for this small DistilBERT model.
+    torch.set_num_threads(1)
+
+    tokenizer = AutoTokenizer.from_pretrained(
+        MODEL_REPO,
+        cache_dir=MODEL_CACHE,
+        token=HF_TOKEN,
     )
+    model = AutoModelForSequenceClassification.from_pretrained(
+        MODEL_REPO,
+        cache_dir=MODEL_CACHE,
+        token=HF_TOKEN,
+        torch_dtype=torch.float32,
+        low_cpu_mem_usage=True,
+    )
+    model.eval()
     id2label = load_label_maps()
-    logger.info("Configured Hugging Face inference: provider=%s model=%s", HF_PROVIDER, MODEL_REPO)
+    logger.info("Loaded local Hugging Face model: %s", MODEL_REPO)
 
 
 class PredictRequest(BaseModel):
@@ -395,33 +408,27 @@ def health_check():
     return {"service": "DashThru voice ordering API", "status": "ok"}
 
 
-def _classify_with_huggingface(text: str) -> tuple[str, float]:
-    """Classify text through Hugging Face without loading model weights locally."""
-    if inference_client is None:
-        raise HTTPException(status_code=503, detail="Hugging Face inference is not configured")
+def _classify_with_model(text: str) -> tuple[str, float]:
+    """Classify text with the locally loaded fine-tuned model."""
+    if model is None or tokenizer is None:
+        raise HTTPException(status_code=503, detail="Model is still loading")
 
-    try:
-        results = inference_client.text_classification(text, model=MODEL_REPO)
-    except Exception as error:
-        logger.exception(
-            "Hugging Face inference failed: provider=%s model=%s error_type=%s",
-            HF_PROVIDER,
-            MODEL_REPO,
-            type(error).__name__,
-        )
-        raise HTTPException(status_code=502, detail="Hugging Face inference request failed") from error
-
-    if not results:
-        raise HTTPException(status_code=502, detail="Hugging Face returned no classification")
-
-    best_result = max(results, key=lambda result: float(result.score))
-    return _normalize_model_intent(best_result.label), float(best_result.score)
+    inputs = tokenizer(text, return_tensors="pt", truncation=True, max_length=64)
+    # Some tokenizer configurations return token_type_ids, but DistilBERT
+    # does not accept that argument in its forward() method.
+    inputs.pop("token_type_ids", None)
+    with torch.inference_mode():
+        probabilities = torch.softmax(model(**inputs).logits, dim=-1)[0]
+    label_id = int(torch.argmax(probabilities).item())
+    model_intent = id2label.get(label_id, "other")
+    confidence = float(probabilities[label_id].item())
+    return _normalize_model_intent(model_intent), confidence
 
 
 @app.post("/predict", response_model=PredictResponse)
 def predict(request: PredictRequest):
     cart = _get_cart(request.session_id)
-    model_intent, confidence = _classify_with_huggingface(request.text)
+    model_intent, confidence = _classify_with_model(request.text)
     extracted = extract_entities(request.text)
     intent = _correct_obvious_intent(request.text, model_intent, extracted)
 
