@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import re
 from pathlib import Path
@@ -10,6 +11,7 @@ from huggingface_hub import InferenceClient, hf_hub_download
 from pydantic import BaseModel, Field
 
 
+logger = logging.getLogger("dashthru")
 MODEL_REPO = os.getenv("MODEL_REPO", "guth001/distilbert-drivethru-intent")
 MODEL_CACHE = os.getenv("MODEL_CACHE", "/tmp/dashthru-model")
 HF_TOKEN = os.getenv("HF_TOKEN") or os.getenv("HUGGINGFACEHUB_API_TOKEN")
@@ -363,9 +365,10 @@ def load_inference_client():
     inference_client = InferenceClient(
         model=MODEL_REPO,
         provider=HF_PROVIDER,
-        token=HF_TOKEN,
+        api_key=HF_TOKEN,
     )
     id2label = load_label_maps()
+    logger.info("Configured Hugging Face inference: provider=%s model=%s", HF_PROVIDER, MODEL_REPO)
 
 
 class PredictRequest(BaseModel):
@@ -400,6 +403,12 @@ def _classify_with_huggingface(text: str) -> tuple[str, float]:
     try:
         results = inference_client.text_classification(text, model=MODEL_REPO)
     except Exception as error:
+        logger.exception(
+            "Hugging Face inference failed: provider=%s model=%s error_type=%s",
+            HF_PROVIDER,
+            MODEL_REPO,
+            type(error).__name__,
+        )
         raise HTTPException(status_code=502, detail="Hugging Face inference request failed") from error
 
     if not results:
