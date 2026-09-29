@@ -2,6 +2,12 @@
 
 > A voice-first drive-thru ordering assistant for quick, natural food orders.
 
+## Submission links
+
+- **Live application:** [https://dashthru-web.onrender.com/](https://dashthru-web.onrender.com/)
+- **Hugging Face model and dataset reference:** [distilbert-drivethru-intent](https://huggingface.co/guth001/distilbert-drivethru-intent/tree/main)
+- **Source code:** [GitHub repository](https://github.com/guth01/DashThru)
+
 DashThru combines a React/Vite interface with a FastAPI backend and a fine-tuned DistilBERT intent classifier. Customers can speak or type an order, browse the menu, customize items, remove items, and check out through one conversation.
 
 ## At a glance
@@ -11,7 +17,7 @@ DashThru combines a React/Vite interface with a FastAPI backend and a fine-tuned
 | Frontend | React + Vite | Voice and text ordering interface |
 | Backend | FastAPI + Uvicorn | Prediction API and cart logic |
 | Model | Fine-tuned DistilBERT loaded from Hugging Face Hub | Local intent classification |
-| Deployment | Render native Python web service | Backend hosting |
+| Deployment | Render | Live frontend hosting |
 
 ## What it can understand
 
@@ -131,14 +137,14 @@ Interactive API documentation is available at `/docs` when the backend is runnin
 
 ## Deployment
 
-The backend is deployed on Render as a native Python web service. The frontend can be deployed as a separate Render static site.
+The application is publicly deployed at [https://dashthru-web.onrender.com/](https://dashthru-web.onrender.com/). The backend runs as a Render native Python web service, while the frontend is served as a Render static site.
 
 ### Recommended deployment
 
 ```text
 Render Web Service  -> FastAPI backend
 Render Static Site  -> React/Vite frontend
-Hugging Face        -> Model hosting
+Hugging Face        -> DistilBERT model and dataset reference
 ```
 
 For the backend Render Web Service, set the root directory to `backend` and enter these values manually:
@@ -155,7 +161,7 @@ Set these environment variables:
 
 ```text
 MODEL_REPO=guth001/distilbert-drivethru-intent
-CORS_ORIGINS=https://your-frontend.example.com
+CORS_ORIGINS=https://dashthru-web.onrender.com
 ```
 
 `HF_TOKEN` is only needed if the model repository is private or gated. The model is downloaded into the instance's temporary cache during startup, so a restart or free-tier sleep can trigger another download and model load.
@@ -169,7 +175,7 @@ npm ci && npm run build
 and set:
 
 ```text
-VITE_API_URL=https://your-backend.example.com
+VITE_API_URL=<deployed-backend-url>
 ```
 
 ## Configuration
